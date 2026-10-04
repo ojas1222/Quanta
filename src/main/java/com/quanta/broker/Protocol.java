@@ -13,7 +13,7 @@ public class Protocol {
     public static final byte PRODUCE_RESPONSE = 0x11;
     public static final byte FETCH_RESPONSE = 0x12;
 
-//client to broker request 
+//::WIRE PROTOCOLS::
 /*
 Quanta emphasises a binary protocol for efficiency.
 Where each message is identified by a unique byte-code followed by the actual message payload.
