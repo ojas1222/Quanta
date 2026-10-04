@@ -124,19 +124,14 @@ public long append(byte[] message) {
         activeLogChannel.write(buffer);
         activeLogChannel.force(true);
 
-        updateIndex(
-                offset,
-                position,
-                segments.get(segments.size() - 1)
-        );
+        updateIndex(offset,position,segments.get(segments.size() - 1));
 
         nextOffset.incrementAndGet();
 
         return offset;
 
     } catch (IOException e) {
-        throw new RuntimeException(
-                "Failed to append message", e);
+        throw new RuntimeException("Failed to append message", e);
 
     } finally {
         lock.writeLock().unlock();
@@ -405,4 +400,26 @@ private void updateIndex(long offset, long position, SegmentInfo segment) {
                 "Failed to update index", e);
     }
 }
+
+//methods introduce for partition rebalancing in SimpleKafkaBroker
+public int getId() {
+    return id;
+}
+
+public int getLeader() {
+    return leader;
+}
+
+public void setLeader(int leader) {
+    this.leader = leader;
+}
+
+public List<Integer> getFollowers() {
+    return new ArrayList<>(followers);
+}
+
+public void setFollowers(List<Integer> followers) {
+    this.followers = new ArrayList<>(followers);
+}
+
 }

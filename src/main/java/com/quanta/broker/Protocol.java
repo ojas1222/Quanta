@@ -8,7 +8,7 @@ public class Protocol {
     public static final byte FETCH = 0x02;
     public static final byte METADATA = 0x03;
     public static final byte CREATE_TOPIC = 0x04;
-
+    public static final byte REPLICATE = 0x05;
     // broker response type
     public static final byte PRODUCE_RESPONSE = 0x11;
     public static final byte FETCH_RESPONSE = 0x12;
@@ -119,14 +119,50 @@ public static byte[] encodeFetchResponse(String message) {
     return buffer.array();
 }
 public static String decodeFetchResponse(byte[] data) {
-    ByteBuffer buffer = ByteBuffer.wrap(data);
+        ByteBuffer buffer = ByteBuffer.wrap(data);
 
-    buffer.get(); // skip response type
+        buffer.get(); // skip response type
 
-    int messageLength = buffer.getInt();
-    byte[] messageBytes = new byte[messageLength];
-    buffer.get(messageBytes);
+        int messageLength = buffer.getInt();
+        byte[] messageBytes = new byte[messageLength];
+        buffer.get(messageBytes);
 
-    return new String(messageBytes);
-}
+        return new String(messageBytes);
+    }
+
+    //handling message replication.
+    public static byte[] encodeReplicateRequest(String topic, int partition, long offset, byte[] message) {
+        byte[] topicBytes = topic.getBytes();
+        ByteBuffer buffer = ByteBuffer.allocate(1 + 4 + topicBytes.length + 4 + 8 + 4 + message.length);
+
+        buffer.put(REPLICATE);
+        buffer.putInt(topicBytes.length);
+        buffer.put(topicBytes);
+        buffer.putInt(partition);
+        buffer.putLong(offset);
+        buffer.putInt(message.length);
+        buffer.put(message);
+
+        return buffer.array();
+    }
+
+public static Object[] decodeReplicateRequest(byte[] data) {
+        ByteBuffer buffer = ByteBuffer.wrap(data);
+
+        buffer.get();
+        int topicLength = buffer.getInt();
+
+        byte[] topicBytes = new byte[topicLength];
+        buffer.get(topicBytes);
+
+        String topic = new String(topicBytes);
+        int partition = buffer.getInt();
+        long offset = buffer.getLong();
+
+        int messageLength = buffer.getInt();
+        byte[] message = new byte[messageLength];
+        buffer.get(message);
+
+        return new Object[]{topic, partition, offset, message};
+    }
 }

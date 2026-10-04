@@ -16,6 +16,7 @@ public class ZooKeeperClient implements Watcher {
 
     private static final String ZOOKEEPER_ADDRESS = "localhost:2181";
     private static final String BROKER_PATH = "/brokers";
+    private static final String TOPIC_PATH = "/topics";
 
     private ZooKeeper zooKeeper;
 
@@ -81,8 +82,8 @@ public class ZooKeeperClient implements Watcher {
     }
 }
 
-    public void watchBrokers() throws Exception {
-
+//watches broker and passes on info to SimpleKafkaBroker.
+public void watchBrokers(java.util.function.Consumer<List<BrokerInfo>> onChange) throws Exception {
     List<String> brokers = zooKeeper.getChildren(
             BROKER_PATH,
             event -> {
@@ -94,29 +95,58 @@ public class ZooKeeperClient implements Watcher {
                 System.out.println("Broker list changed!");
 
                 try {
-                    watchBrokers();
+                    watchBrokers(onChange);
                 } catch (Exception e) {
                     e.printStackTrace();
                 }
             }
     );
 
-    System.out.println("Active brokers:");
+    List<BrokerInfo> brokerInfos = new java.util.ArrayList<>();
 
     for (String broker : brokers) {
 
         String path = BROKER_PATH + "/" + broker;
 
-        byte[] data = zooKeeper.getData(path, false, null);
+        byte[] data =
+                zooKeeper.getData(path, false, null);
 
         String brokerInfo =
                 new String(data, StandardCharsets.UTF_8);
 
-        System.out.println(
-                "- " + broker + " -> " + brokerInfo
+        String[] parts = brokerInfo.split(":");
+
+        int brokerId =
+                Integer.parseInt(
+                        broker.substring("broker-".length())
+                );
+
+        String host = parts[0];
+        int port = Integer.parseInt(parts[1]);
+
+        brokerInfos.add(
+                new BrokerInfo(
+                        brokerId,
+                        host,
+                        port
+                )
         );
     }
+
+    onChange.accept(brokerInfos);
 }
+
+//Overloading implementation for ZooKeeper test.
+//NOT relevant to actual implementation.
+public void watchBrokers() throws Exception {
+    watchBrokers(brokers -> {
+            System.out.println("Active brokers:");
+            for (BrokerInfo broker : brokers) {
+                System.out.println("- broker-" + broker.getId()+ " -> "
+                + broker.getHost()+ ":"+ broker.getPort());
+            }
+        });
+    }
 
 //simple controller election.
 public boolean electController(BrokerInfo brokerInfo)
@@ -148,9 +178,8 @@ public boolean electController(BrokerInfo brokerInfo)
     }
 }
 
-//watch controller for failiure + re-election.
-public void watchController(BrokerInfo brokerInfo)
-        throws Exception {
+    //watch controller for failiure + re-election.
+    public void watchController(BrokerInfo brokerInfo)throws Exception {
 
     zooKeeper.exists(
             "/controller",
@@ -182,6 +211,86 @@ public void watchController(BrokerInfo brokerInfo)
                     }
                 }
             }
-    );
-}
+        );
+    }
+
+//handling the META-DATA for SimpleKafkaBroker
+    public void createTopicMetadata(String topic,int numPartitions) throws Exception {
+    // Create /topics if it does not exist
+        if (zooKeeper.exists(TOPIC_PATH, false) == null) {
+            zooKeeper.create(
+                    TOPIC_PATH,
+                    new byte[0],
+                    ZooDefs.Ids.OPEN_ACL_UNSAFE,
+                    CreateMode.PERSISTENT
+            );
+        }
+        String topicPath =TOPIC_PATH + "/" + topic;
+
+        //create th topic node
+        if (zooKeeper.exists(topicPath, false) == null) {
+            zooKeeper.create(
+                    topicPath,
+                    new byte[0],
+                    ZooDefs.Ids.OPEN_ACL_UNSAFE,
+                    CreateMode.PERSISTENT
+            );
+        }
+
+        for (int i = 0; i < numPartitions; i++) {
+
+            String partitionPath =topicPath + "/partition-" + i;
+
+            if (zooKeeper.exists(partitionPath, false) == null) {
+                zooKeeper.create(
+                        partitionPath,
+                        new byte[0],
+                        ZooDefs.Ids.OPEN_ACL_UNSAFE,
+                        CreateMode.PERSISTENT
+                );
+            }
+        }
+    }
+
+    public void storePartitionMetadata(String topic,int partitionId,int leader,List<Integer> followers) throws Exception {
+        String path =TOPIC_PATH+ "/" + topic+ "/partition-" + partitionId;
+
+        StringBuilder data =new StringBuilder();
+
+        data.append(leader);
+        data.append(":");
+
+        for (int i = 0; i < followers.size(); i++) {
+            if (i > 0) {
+                data.append(",");
+            }
+
+            data.append(followers.get(i));
+        }
+
+        zooKeeper.setData(path,data.toString().getBytes(StandardCharsets.UTF_8),-1);
+    }
+
+    public String getPartitionMetadata(String topic,int partitionId) throws Exception {
+        String path =TOPIC_PATH+ "/" + topic+ "/partition-" + partitionId;
+
+        byte[] data =zooKeeper.getData(path,false,null);
+        return new String(data, StandardCharsets.UTF_8);
+    }
+
+    public boolean topicExists(String topic) throws Exception {
+        return zooKeeper.exists(TOPIC_PATH + "/" + topic, false) != null;
+    }   
+
+    public List<String> getTopicPartitions(String topic) throws Exception {
+        return zooKeeper.getChildren(TOPIC_PATH + "/" + topic, false);
+    }
+
+    public List<String> getTopics() throws Exception {
+        if (zooKeeper.exists(TOPIC_PATH, false) == null) {
+            return new java.util.ArrayList<>();
+        }
+
+        return zooKeeper.getChildren(TOPIC_PATH, false);
+    }
 }
