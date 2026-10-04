@@ -26,11 +26,7 @@ public class ZooKeeperClient implements Watcher {
 
     public void connect() throws IOException, InterruptedException {
 
-        zooKeeper = new ZooKeeper(
-                ZOOKEEPER_ADDRESS,
-                3000,
-                this
-        );
+        zooKeeper = new ZooKeeper(ZOOKEEPER_ADDRESS,3000,this);
 
         connectedSignal.await();
 
@@ -51,11 +47,9 @@ public class ZooKeeperClient implements Watcher {
             );
         }
 
-        String brokerPath =
-                BROKER_PATH + "/broker-" + brokerInfo.getId();
+        String brokerPath = BROKER_PATH + "/broker-" + brokerInfo.getId();
 
-        String brokerData =
-                brokerInfo.getHost() + ":" + brokerInfo.getPort();
+        String brokerData = brokerInfo.getHost() + ":" + brokerInfo.getPort();
 
         // Register broker as an ephemeral node
         zooKeeper.create(
@@ -65,9 +59,7 @@ public class ZooKeeperClient implements Watcher {
                 CreateMode.EPHEMERAL
         );
 
-        System.out.println(
-                "Registered broker: " + brokerPath
-        );
+        System.out.println("Registered broker: " + brokerPath);
     }
 
     @Override
@@ -144,19 +136,13 @@ public boolean electController(BrokerInfo brokerInfo)
                 CreateMode.EPHEMERAL
         );
 
-        System.out.println(
-                "Broker " + brokerInfo.getId()
-                        + " became controller"
-        );
+        System.out.println("Broker " + brokerInfo.getId()+ " became controller");
 
         return true;
 
     } catch (org.apache.zookeeper.KeeperException.NodeExistsException e) {
 
-        System.out.println(
-                "Broker " + brokerInfo.getId()
-                        + " is not the controller"
-        );
+        System.out.println("Broker " + brokerInfo.getId()+ " is not the controller");
 
         return false;
     }
