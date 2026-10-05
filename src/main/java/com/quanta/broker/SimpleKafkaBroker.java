@@ -329,14 +329,31 @@ public class SimpleKafkaBroker {
 
         return partitions.values().iterator().next();
     }
+    private Partition getPartition(String topic, int partitionId) {
+        Map<Integer, Partition> partitions = topics.get(topic);
+
+        if (partitions == null) {
+            throw new IllegalArgumentException("Topic does not exist: " + topic);
+        }
+
+        Partition partition = partitions.get(partitionId);
+
+        if (partition == null) {
+            throw new IllegalArgumentException("Partition does not exist: " + partitionId);
+        }
+
+        return partition;
+    }
 
     private byte[] handleProduceRequest(byte[] data) {
         try {
             String[] request = Protocol.decodeProduceRequest(data);
-            String topic = request[0];
-            String message = request[1];
 
-            Partition partition = getPartitionForProduce(topic);
+            String topic = request[0];
+            int partitionId = Integer.parseInt(request[1]);
+            String message = request[2];
+
+            Partition partition = getPartition(topic, partitionId);
             byte[] messageBytes = message.getBytes();
             long offset = partition.append(messageBytes);
 
@@ -352,10 +369,12 @@ public class SimpleKafkaBroker {
     private byte[] handleFetchRequest(byte[] data) {
         try {
             String[] request = Protocol.decodeFetchRequest(data);
-            String topic = request[0];
-            long offset = Long.parseLong(request[1]);
 
-            Partition partition = getPartitionForProduce(topic);
+            String topic = request[0];
+            int partitionId = Integer.parseInt(request[1]);
+            long offset = Long.parseLong(request[2]);
+
+            Partition partition = getPartition(topic, partitionId);
             List<byte[]> messages = partition.readMessages(offset, 1024);
 
             if (messages.isEmpty()) {
@@ -437,6 +456,63 @@ public class SimpleKafkaBroker {
         }
     }
 
+    //for simple kafka client
+    private byte[] handleMetadataRequest(byte[] data) {
+        try {
+            String topic = Protocol.decodeMetadataRequest(data);
+
+            if (!topics.containsKey(topic)) {
+                throw new IllegalArgumentException("Topic does not exist: " + topic);
+            }
+
+            Map<Integer, Partition> partitions = topics.get(topic);
+            StringBuilder metadata = new StringBuilder();
+
+            for (Map.Entry<Integer, Partition> entry : partitions.entrySet()) {
+                int partitionId = entry.getKey();
+                Partition partition = entry.getValue();
+
+                int leaderId = partition.getLeader();
+                BrokerInfo leader = clusterMetadata.get(leaderId);
+
+                if (leader == null && leaderId == brokerId) {
+                    leader = new BrokerInfo(brokerId, host, port);
+                }
+
+                if (leader == null) {
+                    continue;
+                }
+
+                metadata.append(partitionId)
+                        .append(":")
+                        .append(leader.getId())
+                        .append(":")
+                        .append(leader.getHost())
+                        .append(":")
+                        .append(leader.getPort())
+                        .append(":");
+
+                List<Integer> followers = partition.getFollowers();
+
+                for (int i = 0; i < followers.size(); i++) {
+                    if (i > 0) {
+                        metadata.append(",");
+                    }
+
+                    metadata.append(followers.get(i));
+                }
+
+                metadata.append(";");
+            }
+
+            return Protocol.encodeMetadataResponse(metadata.toString());
+
+        } catch (Exception e) {
+            System.err.println("Failed to handle metadata request: " + e.getMessage());
+            return null;
+        }
+    }
+
     private void acceptConnections() {
         executor.submit(() -> {
             while (running.get()) {
@@ -474,11 +550,11 @@ public class SimpleKafkaBroker {
                     response = handleProduceRequest(request);
                 } else if (requestType == Protocol.FETCH) {
                     response = handleFetchRequest(request);
-                }
-                else if (requestType == Protocol.REPLICATE) {
+                } else if (requestType == Protocol.METADATA) {
+                    response = handleMetadataRequest(request);
+                } else if (requestType == Protocol.REPLICATE) {
                     handleReplicateRequest(channel, request);
                 }
-
                 if (response != null) {
                     channel.write(ByteBuffer.wrap(response));
                 }
