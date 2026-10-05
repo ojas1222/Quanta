@@ -153,6 +153,9 @@ public List<byte[]> readMessages(long offset, int maxBytes) {
         }
 
         long position = findPositionForOffset(segment, offset);
+        if (position == -1) {
+            return messages;
+        }
 
         int segmentIndex = segments.indexOf(segment);
 
@@ -267,7 +270,7 @@ private long findPositionForOffset(SegmentInfo segment, long offset) {
         long indexPosition = relativeOffset * 16;
 
         if (indexPosition >= channel.size()) {
-            indexPosition = Math.max(0, channel.size() - 16);
+            return -1;
         }
 
         channel.position(indexPosition);

@@ -108,6 +108,7 @@ public class SimpleKafkaClient {
             }
 
             topicMetadata.put(topic, metadata);
+            System.out.println("Client metadata for " + topic + ": " + metadataString);
         }
     }
 
