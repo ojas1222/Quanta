@@ -138,6 +138,32 @@ public long append(byte[] message) {
     }
 }
 
+
+public void appendReplica(long offset, byte[] message) {
+    lock.writeLock().lock();
+    try {
+        if (offset != nextOffset.get()) {
+            throw new IllegalStateException("Expected replica offset " + nextOffset.get() + " but received " + offset);
+        }
+        long recordSize = 4L + message.length;
+        if (activeLogChannel.size() + recordSize > 1024 * 1024) createNewSegment(offset);
+        ByteBuffer buffer = ByteBuffer.allocate((int) recordSize);
+        buffer.putInt(message.length);
+        buffer.put(message);
+        buffer.flip();
+        long position = activeLogChannel.position();
+        while (buffer.hasRemaining()) activeLogChannel.write(buffer);
+        activeLogChannel.force(true);
+        updateIndex(offset, position, segments.get(segments.size() - 1));
+        nextOffset.incrementAndGet();
+    } catch (IOException e) {
+        throw new RuntimeException("Failed to append replicated message", e);
+    } finally {
+        lock.writeLock().unlock();
+    }
+}
+
+
 //read message until byte limit, if exceed then new segment.
 public List<byte[]> readMessages(long offset, int maxBytes) {
     lock.readLock().lock();
@@ -408,6 +434,12 @@ private void updateIndex(long offset, long position, SegmentInfo segment) {
 public int getId() {
     return id;
 }
+
+//expose partitions next offset for replica catch up mechanism.
+public long getNextOffset() {
+    return nextOffset.get();
+}
+
 
 public int getLeader() {
     return leader;

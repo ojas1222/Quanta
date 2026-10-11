@@ -86,7 +86,17 @@ public class SimpleKafkaBroker {
             registerWithZookeeper(brokerInfo);
             electController(brokerInfo);
 
-            zkClient.watchController(brokerInfo);
+            
+            zkClient.watchController(brokerInfo, elected -> {
+                isController.set(elected);
+                if (elected) {
+                    try {
+                        rebalancePartitions();
+                    } catch (Exception e) {
+                        System.err.println("Failed to rebalance partitions: " + e.getMessage());
+                    }
+                }
+            });
             loadExistingTopics();
             acceptConnections();    
             System.out.println("Broker " + brokerId +" started on " + host + ":" + port);
@@ -111,8 +121,10 @@ public class SimpleKafkaBroker {
         zkClient.watchBrokers( this::onBrokersChanged);
     }
 
+    
     private void onBrokersChanged(java.util.List<BrokerInfo> brokers) {
         clusterMetadata.clear();
+
         for (BrokerInfo broker : brokers) {
             clusterMetadata.put(broker.getId(), broker);
         }
@@ -126,7 +138,19 @@ public class SimpleKafkaBroker {
                 System.err.println("Failed to rebalance partitions: " + e.getMessage());
             }
         }
+
+        // Catchingz up curr brokers local follower partitions.
+        for (Map.Entry<String, Map<Integer, Partition>> topicEntry : topics.entrySet()) {
+            String topic = topicEntry.getKey();
+
+            for (Partition partition : topicEntry.getValue().values()) {
+                if (partition.getLeader() != brokerId) {
+                    catchUpPartition(topic, partition);
+                }
+            }
+        }
     }
+
 
     public void stop() {
         if (!running.get()) {
@@ -273,13 +297,33 @@ public class SimpleKafkaBroker {
         System.out.println("Loaded topic '" + topic + "' with " + partitions.size() + " partitions.");
     }
 
-    private void loadExistingTopics() throws Exception {
-        List<String> topicNames = zkClient.getTopics();
+    
+private void loadExistingTopics() throws Exception {
+    List<String> topicNames = zkClient.getTopics();
 
-        for (String topic : topicNames) {
-            loadTopic(topic);
+    for (String topic : topicNames) {
+        loadTopic(topic);
+        //diagnostic log
+        //System.out.println("Broker " + brokerId + " loaded topic " + topic + ", local partitions: " + topics.get(topic).size());
+    }
+
+    //if when broker list arrives , topic already loaded
+    for (Map.Entry<String, Map<Integer, Partition>> topicEntry : topics.entrySet()) {
+        String topic = topicEntry.getKey();
+
+        for (Partition partition : topicEntry.getValue().values()) {
+            //temporary diagnostic log.
+            // System.out.println("Broker " + brokerId + " startup check: topic=" + topic
+            //         + ", partition=" + partition.getId()
+            //         + ", leader=" + partition.getLeader()
+            //         + ", nextOffset=" + partition.getNextOffset());
+            if (partition.getLeader() != brokerId) {
+                catchUpPartition(topic, partition);
+            }
         }
     }
+}
+
 
     private void rebalancePartitions() throws Exception {
         if (!isController.get()) {
@@ -314,6 +358,17 @@ public class SimpleKafkaBroker {
 
                 partition.setFollowers(followers);
                 zkClient.storePartitionMetadata(topic, partition.getId(), leader, followers);
+            }
+        }
+
+        // Synchronize follower replicas after updating partition meta-datas.
+        for (Map.Entry<String, Map<Integer, Partition>> topicEntry : topics.entrySet()) {
+            String topic = topicEntry.getKey();
+
+            for (Partition partition : topicEntry.getValue().values()) {
+                if (partition.getLeader() != brokerId) {
+                    catchUpPartition(topic, partition);
+                }
             }
         }
 
@@ -428,6 +483,86 @@ public class SimpleKafkaBroker {
         }
     }
 
+    
+private byte[] fetchMessageFromBroker(BrokerInfo leader, String topic, int partitionId, long offset) throws IOException {
+    try (SocketChannel channel = SocketChannel.open()) {
+        channel.connect(new java.net.InetSocketAddress(leader.getHost(), leader.getPort()));
+        byte[] request = Protocol.encodeFetchRequest(topic, partitionId, offset);
+        ByteBuffer requestBuffer = ByteBuffer.wrap(request);
+        while (requestBuffer.hasRemaining()) {
+            channel.write(requestBuffer);
+        }
+
+        ByteBuffer header = ByteBuffer.allocate(5);
+        while (header.hasRemaining()) {
+            int read = channel.read(header);
+            if (read < 0) {
+                throw new IOException("Leader closed connection while sending fetch response");
+            }
+        }
+
+        header.flip();
+        byte responseType = header.get();
+        int messageLength = header.getInt();
+
+        if (responseType != Protocol.FETCH_RESPONSE || messageLength < 0) {
+            throw new IOException("Invalid fetch response from leader");
+        }
+        if (messageLength == 0) {
+            return null;
+        }
+
+        ByteBuffer messageBuffer = ByteBuffer.allocate(messageLength);
+        while (messageBuffer.hasRemaining()) {
+            int read = channel.read(messageBuffer);
+            if (read < 0) {
+                throw new IOException("Leader closed connection while sending message");
+            }
+        }
+        return messageBuffer.array();
+    }
+}
+
+
+private void catchUpPartition(String topic, Partition partition) {
+    int leaderId = partition.getLeader();
+
+    // Nothing to catch up on if this broker is the leader.
+    if (leaderId == brokerId) {
+        return;
+    }
+
+    BrokerInfo leader = clusterMetadata.get(leaderId);
+    if (leader == null) {
+        System.out.println("Cannot catch up partition " + partition.getId()
+                + ": leader " + leaderId + " is unavailable.");
+        return;
+    }
+
+    long offset = partition.getNextOffset();
+
+    while (running.get()) {
+        try {
+            byte[] message = fetchMessageFromBroker(
+                    leader, topic, partition.getId(), offset);
+
+            if (message == null) {
+                break;
+            }
+
+            partition.appendReplica(offset, message);
+            System.out.println("Caught up partition " + partition.getId()
+                    + " at offset " + offset + " from broker " + leaderId);
+            offset++;
+        } catch (Exception e) {
+            System.err.println("Replica catch-up failed for partition "
+                    + partition.getId() + " at offset " + offset + ": "
+                    + e.getMessage());
+            break;
+        }
+    }
+}
+
     private void handleReplicateRequest(SocketChannel clientChannel, byte[] data) throws IOException {
         try {
             Object[] request = Protocol.decodeReplicateRequest(data);
@@ -443,7 +578,7 @@ public class SimpleKafkaBroker {
             }
 
             Partition partition = partitions.get(partitionId);
-            partition.append(message);
+            partition.appendReplica(offset, message);
 
             ByteBuffer response = ByteBuffer.allocate(9);
             response.put(Protocol.PRODUCE_RESPONSE);

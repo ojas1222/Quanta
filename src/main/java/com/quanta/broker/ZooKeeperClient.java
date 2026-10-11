@@ -178,41 +178,38 @@ public boolean electController(BrokerInfo brokerInfo)
     }
 }
 
-    //watch controller for failiure + re-election.
-    public void watchController(BrokerInfo brokerInfo)throws Exception {
-
-    zooKeeper.exists(
-            "/controller",
-            event -> {
-
-                if (closing) {
-                    return;
-                }
-
-                if (event.getType() ==
-                        Watcher.Event.EventType.NodeDeleted) {
-
-                    System.out.println(
-                            "Controller has failed. Starting election..."
-                    );
-
-                    try {
-                        electController(brokerInfo);
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                }
-
-                if (!closing) {
-                    try {
-                        watchController(brokerInfo);
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                }
+    //watch controller for failiure + re-election.   
+public void watchController(BrokerInfo brokerInfo, java.util.function.Consumer<Boolean> onElectionResult) throws Exception {
+    zooKeeper.exists("/controller", event -> {
+        if (closing) return;
+        if (event.getType() == Watcher.Event.EventType.NodeDeleted) {
+            System.out.println("Controller has failed. Starting election...");
+            try {
+                boolean elected = electController(brokerInfo);
+                onElectionResult.accept(elected);
+            } catch (Exception e) {
+                e.printStackTrace();
+                onElectionResult.accept(false);
             }
-        );
-    }
+        }
+        if (!closing) {
+            try {
+                watchController(brokerInfo, onElectionResult);
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+        }
+    });
+}
+
+//overloaded method for exisiting tests.
+
+public void watchController(BrokerInfo brokerInfo) throws Exception {
+    watchController(brokerInfo, elected -> {
+        System.out.println("Controller election result for broker " + brokerInfo.getId() + ": " + elected);
+    });
+}
+
 
 //handling the META-DATA for SimpleKafkaBroker
     public void createTopicMetadata(String topic,int numPartitions) throws Exception {

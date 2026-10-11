@@ -3,7 +3,7 @@ package com.quanta.client;
 
 public class ProducerTest {
     public static void main(String[] args) throws Exception {
-        SimpleKafkaProducer producer = new SimpleKafkaProducer("localhost",9092,"test-topic");
+        SimpleKafkaProducer producer = new SimpleKafkaProducer("localhost",9093,"test-topic");
         producer.initialize();
 
         long offset = producer.send("Hello from Quanta Producer");
