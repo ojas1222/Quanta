@@ -412,6 +412,9 @@ private void loadExistingTopics() throws Exception {
             byte[] messageBytes = message.getBytes();
             long offset = partition.append(messageBytes);
 
+            //marker-data producer log in broker terminal.
+            System.out.println("Produced message to topic '" + topic+ "', partition " + partitionId + ", offset " + offset);
+
             replicateToFollowers(topic, partition, messageBytes, offset);
 
             return Protocol.encodeProduceResponse(offset);
@@ -431,6 +434,10 @@ private void loadExistingTopics() throws Exception {
 
             Partition partition = getPartition(topic, partitionId);
             List<byte[]> messages = partition.readMessages(offset, 1024);
+
+            if (!messages.isEmpty()) {
+                System.out.println("Fetched message from topic '" + topic+ "', partition " + partitionId+ ", offset " + offset);
+            }
 
             if (messages.isEmpty()) {
                 return Protocol.encodeFetchResponse("");
@@ -691,8 +698,12 @@ private void catchUpPartition(String topic, Partition partition) {
                     handleReplicateRequest(channel, request);
                 }
                 if (response != null) {
-                    channel.write(ByteBuffer.wrap(response));
+                ByteBuffer responseBuffer = ByteBuffer.wrap(response);
+
+                while (responseBuffer.hasRemaining()) {
+                    channel.write(responseBuffer);
                 }
+            }
             }
         } catch (IOException e) {
             System.err.println("Client connection closed: " + e.getMessage());

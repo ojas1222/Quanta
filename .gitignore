@@ -1,5 +1,19 @@
+
+# Maven build output
 target/
+
+# IDE settings
 .idea/
 .vscode/
+
+# Compiled Java files
 *.class
+
+# Logs
 *.log
+logs/
+
+# Local broker data and test artifacts
+data/
+data-backup-stage8/
+data-old-stage8/
